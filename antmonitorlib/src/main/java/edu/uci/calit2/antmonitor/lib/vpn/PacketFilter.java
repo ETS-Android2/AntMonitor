@@ -45,6 +45,10 @@ public abstract class PacketFilter {
     /** Default annotation that allows packets through */
     protected final static PacketAnnotation DEFAULT_ANNOTATION = new PacketAnnotation();
 
+    /** Default annotation that allows decrypted TLS/SSL packets through */
+    protected final static PacketAnnotation DEFAULT_DECRYPTED_ANNOTATION =
+            new PacketAnnotation(true, true);
+
     /**
      * Constructor that prepares this filter for mapping.
      * Children MUST call super() for proper function of the {@link PacketFilter}!
@@ -89,7 +93,7 @@ public abstract class PacketFilter {
      * if the packet is allowed to be sent, {@code false} otherwise.
      */
     public PacketAnnotation acceptDecryptedSSLPacket(ByteBuffer packet, TCPReassemblyInfo tcpInfo) {
-        return DEFAULT_ANNOTATION;
+        return DEFAULT_DECRYPTED_ANNOTATION;
     }
 
     /**

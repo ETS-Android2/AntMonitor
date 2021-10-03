@@ -60,6 +60,9 @@ public class InspectorPacketFilter extends OutPacketFilter {
     /** Annotation used for blocking packets */
     private final PacketAnnotation BLOCK_ANNOTATION = new PacketAnnotation(false);
 
+    /** Annotation used for blocking packets */
+    private final PacketAnnotation BLOCK_DECRYPTED_ANNOTATION = new PacketAnnotation(false, true);
+
     /** Indicates whether or not inspection is enabled */
     private static boolean ENABLED;
 
@@ -118,12 +121,12 @@ public class InspectorPacketFilter extends OutPacketFilter {
     public PacketAnnotation acceptDecryptedSSLPacket(final ByteBuffer packet,
                                                      TCPReassemblyInfo tcpInfo) {
         if (!ENABLED)
-            return DEFAULT_ANNOTATION;
+            return DEFAULT_DECRYPTED_ANNOTATION;
 
         final ArrayList<String> foundStrings = AhoCorasickInterface.getInstance().
                 search(packet, packet.limit());
         if (foundStrings == null || foundStrings.isEmpty())
-            return DEFAULT_ANNOTATION; // No malicious strings found, allow packet
+            return DEFAULT_DECRYPTED_ANNOTATION; // No malicious strings found, allow packet
 
         // We found something malicious, so
         // this packet gets to skip the line for mapping since
@@ -131,7 +134,11 @@ public class InspectorPacketFilter extends OutPacketFilter {
         ConnectionValue v = mapParamsToApp(tcpInfo.getRemoteIp(), tcpInfo.getSrcPort(),
                 tcpInfo.getDestPort());
         String app = (v.getVersionNum() != null) ? v.getAppName() : "Unknown";
-        return processLeakNew(packet, app, tcpInfo.getRemoteIp(), foundStrings);
+        
+        if (processLeakNew(packet, app, tcpInfo.getRemoteIp(), foundStrings))
+            return DEFAULT_DECRYPTED_ANNOTATION;
+        else
+            return BLOCK_DECRYPTED_ANNOTATION;
     }
 
     /**
@@ -157,7 +164,10 @@ public class InspectorPacketFilter extends OutPacketFilter {
         // we need to know what app is doing this right away
         ConnectionValue v = mapDatagramToApp(packet);
         String app = (v.getVersionNum() != null) ? v.getAppName() : "Unknown";
-        return processLeakNew(packet, app, IpDatagram.readDestinationIP(packet), foundStrings);
+        if (processLeakNew(packet, app, IpDatagram.readDestinationIP(packet), foundStrings))
+            return DEFAULT_ANNOTATION;
+        else
+            return BLOCK_ANNOTATION;
     }
 
     /**
@@ -278,7 +288,7 @@ public class InspectorPacketFilter extends OutPacketFilter {
      * @param foundStrings the leaking strings
      * @return {@code true} if the packet can get sent out (hash or allow case), {@code false} o.w.
      */
-    private PacketAnnotation processLeakNew(final ByteBuffer packet, String app, String remoteIp,
+    private boolean processLeakNew(final ByteBuffer packet, String app, String remoteIp,
                                             ArrayList<String> foundStrings) {
 
         // TODO: this method is horribly inefficient, mostly due to location stuff
@@ -289,7 +299,7 @@ public class InspectorPacketFilter extends OutPacketFilter {
             logBlockPacket(leaks, remoteIp);
             // TODO: ANTMONITOR-283 - fire notification?
             // return false means the packet will not go through
-            return BLOCK_ANNOTATION;
+            return false;
         }
 
         // If we make it here, it means packet is not blocked.
@@ -332,7 +342,7 @@ public class InspectorPacketFilter extends OutPacketFilter {
         }
 
         // If we made it here, packet is allowed to go through
-        return DEFAULT_ANNOTATION;
+        return true;
     }
 
     private void hashLocation(String app, String remoteIp, ArrayList<String> foundStrings,

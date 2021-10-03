@@ -241,10 +241,10 @@ public class ForwarderManager {
     static final ConcurrentMap<Long, Thread> mActiveThreads = new ConcurrentHashMap<>();
 
     /** Queue to which put packets on for off-line logging of incoming data */
-    private static PacketLogQueue mIncPacketQueue;
+    static PacketLogQueue mIncPacketQueue;
 
     /** Queue to which put packets on for off-line logging of outgoing data */
-    private static PacketLogQueue mOutPacketQueue;
+    static PacketLogQueue mOutPacketQueue;
 
     /** Filter that either allows or denies outgoing packets */
     public static OutPacketFilter mOutFilter;

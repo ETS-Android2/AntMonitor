@@ -35,13 +35,17 @@ class DumperFileStateManager {
 
     private final Context mContext;
 
+    /** Indicates whether or not this manager is for packets from decrypted SSL/TLS streams */
+    private final boolean isForDecrypted;
+
     private Pair<PcapngFile, PcapngFile> files;
 
     // Split file when size reaches 10mb
     private final long maxFileSize = 10485760;
 
-    public DumperFileStateManager(Context context) {
+    DumperFileStateManager(Context context, boolean isForDecrypted) {
         mContext = context;
+        this.isForDecrypted = isForDecrypted;
     }
 
     /**
@@ -57,7 +61,7 @@ class DumperFileStateManager {
      * @param type
      * @return the file
      */
-    public synchronized PcapngFile getExistingFile(TrafficType type){
+    public synchronized PcapngFile getExistingFile(TrafficType type) {
         PcapngFile file = getFileForType(type);
 
         // If file is too big, create a new file set
@@ -65,7 +69,8 @@ class DumperFileStateManager {
             endFiles();
 
             // Create a new file set
-            Pair<PcapngFile, PcapngFile> files = TrafficLogFiles.createNewActiveFileSet(mContext);
+            Pair<PcapngFile, PcapngFile> files =
+                    TrafficLogFiles.createNewActiveFileSet(mContext, isForDecrypted);
             setFiles(files);
 
             return getFileForType(type);

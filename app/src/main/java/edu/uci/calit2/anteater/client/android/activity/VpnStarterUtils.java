@@ -87,10 +87,10 @@ public class VpnStarterUtils {
      * Convenience method used for retrieving the {@link IncPacketFilter} used by our app
      * for incoming real-time traffic
      * @param context
-     * @return {@code null} for default
+     * @return {@link IncPacketFilter}
      */
     static IncPacketFilter getIncFilter(Context context) {
-        return null;
+        return new IncPacketFilter(context);
     }
 
     /**

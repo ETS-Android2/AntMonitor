@@ -34,9 +34,13 @@ public class PacketAnnotation {
     /** Lets the system know whether or not to allow the packet through */
     private final boolean allowPacket;
 
+    /** Indicates whether the packet is from a decrypted SSL/TLS stream */
+    protected final boolean isDecryptedTLS;
+
     /** Default constructor: allows the packet through */
     public PacketAnnotation() {
         this.allowPacket = true;
+        this.isDecryptedTLS = false;
     }
 
     /**
@@ -45,10 +49,27 @@ public class PacketAnnotation {
      */
     public PacketAnnotation(boolean allowPacket) {
         this.allowPacket = allowPacket;
+        this.isDecryptedTLS = false;
+    }
+
+    /**
+     * Constructor
+     * @param allowPacket pass {@code true} to allow the packet through, and {@code false} otherwise
+     * @param isDecryptedTLS pass {@code true} if packet is from a decrypted SSL/TLS stream, and
+     * {@code false} otherwise
+     */
+    public PacketAnnotation(boolean allowPacket, boolean isDecryptedTLS) {
+        this.allowPacket = allowPacket;
+        this.isDecryptedTLS = isDecryptedTLS;
     }
 
     /**
      * @return {@code true} if packet is allowed to go through; {@code false} otherwise
      */
-    public boolean isAllowed() { return allowPacket;}
+    public boolean isAllowed() { return allowPacket; }
+
+    /**
+     * @return {@code true} if packet is from a decrypted SSL/TLS stream; {@code false} otherwise
+     */
+    public boolean isDecryptedTLS() { return isDecryptedTLS; }
 }

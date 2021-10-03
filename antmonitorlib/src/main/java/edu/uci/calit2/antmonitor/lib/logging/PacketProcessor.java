@@ -54,6 +54,9 @@ public class PacketProcessor {
     /** Manager of pcapng files */
     private static DumperFileStateManager mStateManager;
 
+    /** Manager of pcapng files that host packets from decrypted SSL/TLS streams */
+    private static DumperFileStateManager mDecryptedStateManager;
+
     /** Reference to the singleton */
     private static PacketProcessor processor = null;
 
@@ -81,9 +84,14 @@ public class PacketProcessor {
 
     private synchronized void prepareForLogging() {
         // Create the log files
-        mStateManager = new DumperFileStateManager(mContext);
-        Pair<PcapngFile, PcapngFile> files = TrafficLogFiles.createNewActiveFileSet(mContext);
+        mStateManager = new DumperFileStateManager(mContext, false);
+        Pair<PcapngFile, PcapngFile> files = TrafficLogFiles.createNewActiveFileSet(mContext, false);
         mStateManager.setFiles(files);
+
+        mDecryptedStateManager = new DumperFileStateManager(mContext, true);
+        Pair<PcapngFile, PcapngFile> decryptedFiles =
+                TrafficLogFiles.createNewActiveFileSet(mContext, true);
+        mDecryptedStateManager.setFiles(decryptedFiles);
     }
 
 
@@ -187,9 +195,15 @@ public class PacketProcessor {
         if(comment == null)
             comment = "";
 
-        PcapngFile file = mStateManager.getExistingFile(trafficDirection);
-        file.appendEnhancedPacketBlock(packet.getTimestamp(), packet.getCaptureLength(),
-                packet.getOriginalLength(), packet.getDump(), comment);
+        if (packet.getPacketAnnotation().isDecryptedTLS()) {
+            PcapngFile file = mDecryptedStateManager.getExistingFile(trafficDirection);
+            file.appendEnhancedPacketBlock(packet.getTimestamp(), packet.getCaptureLength(),
+                    packet.getOriginalLength(), packet.getDump(), comment);
+        } else {
+            PcapngFile file = mStateManager.getExistingFile(trafficDirection);
+            file.appendEnhancedPacketBlock(packet.getTimestamp(), packet.getCaptureLength(),
+                    packet.getOriginalLength(), packet.getDump(), comment);
+        }
     }
 
     /**
@@ -293,6 +307,9 @@ public class PacketProcessor {
                 if (mStateManager != null) {
                     mStateManager.finishLogging();
                     mStateManager = null;
+
+                    mDecryptedStateManager.finishLogging();
+                    mDecryptedStateManager = null;
                 }
                 processor = null;
             }
