@@ -42,6 +42,7 @@ import javax.net.ssl.SSLSocketFactory;
 
 import edu.uci.calit2.antmonitor.lib.logging.ConnectionValue;
 import edu.uci.calit2.antmonitor.lib.logging.PacketProcessor;
+import edu.uci.calit2.antmonitor.lib.util.Protocol;
 
 /**
  * Adopted from PrivacyGuard: https://bitbucket.org/Near/privacyguard/src
@@ -97,6 +98,14 @@ class TLSProxyServer extends Thread {
                 Socket client = clientChannel.socket();
                 TCPForwarder forwarder = ForwarderManager.mActiveTCPForwarderMap.
                                                                             get(client.getPort());
+
+                // Get app name so we can pin correctly in case anything below goes wrong
+                ConnectionValue cv = PacketProcessor.getInstance(ForwarderManager.mService).
+                        getConnValue(Protocol.TCP.getProtocolNumber(),
+                                forwarder.mSrc.mPort,
+                                VpnClient.mTunInterfaceIP,
+                                forwarder.mDst.mPort,
+                                forwarder.mServerIP.toString().substring(1));
 
                 InetAddress server = InetAddress.getByAddress(forwarder.mDst.mIpArray);
                 String strServer = server.toString().substring(1);
@@ -178,10 +187,6 @@ class TLSProxyServer extends Thread {
 
                             ssl_target.close();
                         }
-
-                        // Get app name before destorying TCP connections
-                        ConnectionValue cv = PacketProcessor.getInstance(ForwarderManager.mService).
-                                getConnValue(forwarder.mSrc.mPort);
 
                         TCPForwarder newFwd = ForwarderManager.mActiveTCPForwarderMap.get(forwarder.mSrc.mPort);
                         if (newFwd != null) {

@@ -29,7 +29,7 @@ import edu.uci.calit2.antmonitor.lib.util.PacketDumpInfo;
  * @author Simon Langhoff, Janus Varmarken
  */
 public class PacketLogQueue {
-    private ArrayBlockingQueue<PacketDumpInfo> queue = new ArrayBlockingQueue<PacketDumpInfo>(35000);
+    private ArrayBlockingQueue<PacketDumpInfo> queue = new ArrayBlockingQueue<PacketDumpInfo>(70000);
 
     private final long timeout = 1000l;
 

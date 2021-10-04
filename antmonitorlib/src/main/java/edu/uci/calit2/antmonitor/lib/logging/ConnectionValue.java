@@ -43,6 +43,9 @@ public class ConnectionValue {
          * number that was received is typically appended at the end of this string. */
         String INVALID_PROTOCOL = PREFIX + "non tcp/udp packet. Protocol: ";
 
+        String INVALID_UID = PREFIX + "INVALID_UID in ConnectivityManager.";
+
+
         /** {@link ConnectionValue} corresponding to {@link #NOT_FOUND} */
         ConnectionValue CV_NOT_FOUND = new ConnectionValue(NOT_FOUND, null);
 
@@ -51,6 +54,9 @@ public class ConnectionValue {
 
         /** {@link ConnectionValue} corresponding to {@link #INVALID_TUPLE} */
         ConnectionValue CV_INVALID_TUPLE = new ConnectionValue(INVALID_TUPLE, null);
+
+        /** {@link ConnectionValue} corresponding to {@link #INVALID_UID} */
+        ConnectionValue CV_INVALID_UID = new ConnectionValue(INVALID_UID, null);
     }
 
     /** Timer used for cleaning the hash map. If the connection value is old,

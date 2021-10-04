@@ -40,8 +40,8 @@ class DumperFileStateManager {
 
     private Pair<PcapngFile, PcapngFile> files;
 
-    // Split file when size reaches 10mb
-    private final long maxFileSize = 10485760;
+    // Split file when size reaches 20mb
+    private final long maxFileSize = 20971520;
 
     DumperFileStateManager(Context context, boolean isForDecrypted) {
         mContext = context;

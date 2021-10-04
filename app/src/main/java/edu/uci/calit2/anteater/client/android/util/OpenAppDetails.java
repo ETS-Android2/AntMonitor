@@ -1,6 +1,6 @@
 /*
  *  This file is part of AntMonitor <https://athinagroup.eng.uci.edu/projects/antmonitor/>.
- *  Copyright (C) 2018 Anastasia Shuba and the UCI Networking Group
+ *  Copyright (C) 2021 Anastasia Shuba and the UCI Networking Group
  *  <https://athinagroup.eng.uci.edu>, University of California, Irvine.
  *
  *  AntMonitor is free software: you can redistribute it and/or modify
@@ -26,10 +26,11 @@ import edu.uci.calit2.antmonitor.lib.logging.ConnectionValue;
 import edu.uci.calit2.antmonitor.lib.logging.PacketProcessor;
 import edu.uci.calit2.antmonitor.lib.logging.PacketProcessor.TrafficType;
 import edu.uci.calit2.antmonitor.lib.util.Protocol;
+import edu.uci.calit2.antmonitor.lib.vpn.VpnClient;
 
 /**
  * Class describing the details of all open applications in the mobile for visualization of data leaks
- * @author Nivedhita Sathyamurthy
+ * @author Nivedhita Sathyamurthy, Anastasia Shuba
  */
 public class OpenAppDetails {
 
@@ -44,7 +45,14 @@ public class OpenAppDetails {
 
     public void addTCPConnection(String remoteIp, int srcPort, int destPort) {
         if(isVisualizationOn) {
-            ConnectionValue cv = PacketProcessor.getInstance(mContext).getConnValue(srcPort);
+            ConnectionValue cv =
+                    PacketProcessor.getInstance(mContext).getConnValue(
+                            Protocol.TCP.getProtocolNumber(),
+                            srcPort,
+                            VpnClient.mTunInterfaceIP,
+                            destPort,
+                            remoteIp);
+
             String appName = cv == null ? "No.mapping.after.2.attempts" : cv.getAppName();
 
             Intent intent = new Intent(RealTimeFragment.ADD_CONNECTION);
@@ -71,7 +79,12 @@ public class OpenAppDetails {
 
     public void removeConnection(String remoteIp, int srcPort, int destPort) {
         if (isVisualizationOn) {
-            ConnectionValue cv = PacketProcessor.getInstance(mContext).getConnValue(srcPort);
+            ConnectionValue cv = PacketProcessor.getInstance(mContext).getConnValue(
+                    Protocol.TCP.getProtocolNumber(),
+                    srcPort,
+                    VpnClient.mTunInterfaceIP,
+                    destPort,
+                    remoteIp);
             String appName = cv == null ? "No.mapping.after.2.attempts" : cv.getAppName();
 
             Intent intent = new Intent(RealTimeFragment.REMOVE_CONNECTION);

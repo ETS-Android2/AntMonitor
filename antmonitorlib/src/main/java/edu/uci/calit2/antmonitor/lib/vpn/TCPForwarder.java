@@ -30,6 +30,7 @@ import java.util.LinkedList;
 import edu.uci.calit2.antmonitor.lib.logging.ConnectionValue;
 import edu.uci.calit2.antmonitor.lib.logging.PacketProcessor;
 import edu.uci.calit2.antmonitor.lib.util.IpDatagram;
+import edu.uci.calit2.antmonitor.lib.util.Protocol;
 import edu.uci.calit2.antmonitor.lib.util.TCPPacket;
 import edu.uci.calit2.antmonitor.lib.util.TCPReassemblyInfo;
 import edu.uci.calit2.antmonitor.lib.vpn.ForwarderManager.Logg;
@@ -150,7 +151,11 @@ public class TCPForwarder {
                 if (TLSProxyServer.pinnedDomains.containsKey(certCN)) {
                     // Check if this domain is pinned for this particular app
                     ConnectionValue cv = PacketProcessor.getInstance(ForwarderManager.mService).
-                            getConnValue(mSrc.mPort);
+                            getConnValue(Protocol.TCP.getProtocolNumber(),
+                                    mSrc.mPort,
+                                    VpnClient.mTunInterfaceIP,
+                                    mDst.mPort,
+                                    serverIP);
 
                     if (cv == null) {
                         Logg.e(TAG, TCPForwarder.this + ": Skipping TLS: could not get app name.");

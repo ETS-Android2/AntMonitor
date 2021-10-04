@@ -19,6 +19,7 @@ package edu.uci.calit2.antmonitor.lib.vpn;
 
 import android.content.Context;
 
+import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
 
 import edu.uci.calit2.antmonitor.lib.logging.ConnectionValue;
@@ -114,20 +115,37 @@ public abstract class PacketFilter {
                 protocolNumber ==  Protocol.TCP.getProtocolNumber()) {
 
             int srcPort = -1;
+            int dstPort = -1;
+            String srcAddr = "";
+            String dstAddr = "";
 
             try {
                 if (mTrafficType == TrafficType.OUTGOING_PACKETS)
+                {
                     srcPort = IpDatagram.readSourcePort(packet);
+                    srcAddr = IpDatagram.readSourceIP(packet);
+
+                    dstPort = IpDatagram.readDestinationPort(packet);
+                    dstAddr = IpDatagram.readDestinationIP(packet);
+                }
+
                 else
+                {
                     srcPort = IpDatagram.readDestinationPort(packet);
+                    srcAddr = IpDatagram.readDestinationIP(packet);
+
+                    dstPort = IpDatagram.readSourcePort(packet);
+                    dstAddr = IpDatagram.readSourceIP(packet);
+                }
 
                 // Proceed to mapping
-                cv = PacketProcessor.getInstance(mContext).getConnValue(srcPort);
+                cv = PacketProcessor.getInstance(mContext).getConnValue(protocolNumber, srcPort,
+                        srcAddr, dstPort, dstAddr);
 
                 if (cv == null)
                     cv = ConnectionValue.MappingErrors.CV_NOT_FOUND;
 
-            } catch (IndexOutOfBoundsException e) {
+            } catch (IndexOutOfBoundsException | UnknownHostException e) {
                 // Write that we couldn't map packet due to malformed packet
                 cv = ConnectionValue.MappingErrors.CV_MALFORMED_PACKET;
             }
@@ -142,6 +160,7 @@ public abstract class PacketFilter {
     /**
      * Maps the given parameters to an app. Call this function only when needed as it may
      * slow-down network throughput due to I/O operations required for mapping.
+     * This function assumes a TCP protocol
      *
      * @param remoteIp the IP of the Internet host being contacted
      * @param srcPort port used by the app responsible for the connection
@@ -151,10 +170,9 @@ public abstract class PacketFilter {
      *          in {@link ConnectionValue.MappingErrors}
      */
     protected ConnectionValue mapParamsToApp(String remoteIp, int srcPort, int destPort) {
-
-        // Mark as outgoing so that src/dest IPs are not flipped since we already know what
-        // is the remote IP and what is the app IP
-        ConnectionValue cv = PacketProcessor.getInstance(mContext).getConnValue(srcPort);
+        ConnectionValue cv = PacketProcessor.getInstance(mContext).getConnValue(
+                Protocol.TCP.getProtocolNumber(), srcPort, VpnClient.mTunInterfaceIP, destPort,
+                remoteIp);
 
         if (cv == null)
             cv = ConnectionValue.MappingErrors.CV_NOT_FOUND;
