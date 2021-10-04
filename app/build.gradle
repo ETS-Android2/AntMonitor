@@ -23,18 +23,18 @@ apply plugin: 'com.android.application'
 
 
 android {
-    compileSdkVersion 26
-    buildToolsVersion "26.0.3"
+    compileSdkVersion 29
+    buildToolsVersion "29.0.0"
 
 
     defaultConfig {
         applicationId "edu.uci.calit2.anteatermo"
         minSdkVersion 14
-        targetSdkVersion 22
+        targetSdkVersion 26
         versionCode 18
         versionName "0.1.8"
         multiDexEnabled true
-
+        testInstrumentationRunner "com.android.test.runner.MultiDexTestRunner"
     }
 
     buildTypes {

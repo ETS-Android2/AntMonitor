@@ -28,6 +28,8 @@ import java.nio.ByteBuffer;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
+import edu.uci.calit2.antmonitor.lib.logging.PacketAnnotation;
+import edu.uci.calit2.antmonitor.lib.util.PacketDumpInfo;
 import edu.uci.calit2.antmonitor.lib.util.TCPReassemblyInfo;
 
 
@@ -118,9 +120,25 @@ class TLSProxyForwarder implements Runnable {
                         tcpInfo = ForwarderManager.mTCPReassemblyMap.remove(forwarder.mSrc.mPort);
                     }
 
+                    PacketAnnotation annot =
+                            ForwarderManager.mOutFilter.acceptDecryptedSSLPacket(buffer, tcpInfo);
+                    if (!annot.isAllowed())
+                        continue;
 
-                    accepted = ForwarderManager.mOutFilter.acceptDecryptedSSLPacket(buffer, tcpInfo).
-                            isAllowed();
+                    // TODO: might need to deal with retransmision, unseen acks, etc...
+
+                    if (ForwarderManager.mOutPacketQueue != null) {
+                        //Log.w(TAG, forwarder + " constructing seq = " + tcpInfo.getSequenceNum());
+                        byte[] packet = forwarder.constructTcpIpPacketToServer(buffer.array(),
+                                buffer.arrayOffset(), got, forwarder.mDecryptedSeqNumberToServer,
+                                forwarder.mDecryptedAckNumberToServer); // TODO: could maybe just
+                        // use a bool here instead
+
+                        ForwarderManager.mOutPacketQueue.put(new PacketDumpInfo(packet, annot));
+                    }
+
+                    // Update seq number
+                    forwarder.mDecryptedSeqNumberToServer += got;
                 } else {
                     synchronized (forwarder) {
                         tcpInfo = new TCPReassemblyInfo(
@@ -129,12 +147,22 @@ class TLSProxyForwarder implements Runnable {
                                 forwarder.mAckNumberToClient, forwarder.mSequenceNumberToClient);
                     }
 
-                    accepted = ForwarderManager.mIncFilter.acceptDecryptedSSLPacket(buffer, tcpInfo).
-                            isAllowed();
-                }
+                    PacketAnnotation annot =
+                            ForwarderManager.mIncFilter.acceptDecryptedSSLPacket(buffer, tcpInfo);
+                    if (!annot.isAllowed())
+                        continue;
 
-                if (!accepted) {
-                    continue;
+                    if (ForwarderManager.mIncPacketQueue != null) {
+                        byte[] packetToClient =
+                                forwarder.constructTcpIpPacketToClient(buffer.array(),
+                                        buffer.arrayOffset(), got, forwarder.mDecryptedAckNumberToServer,
+                                        forwarder.mDecryptedSeqNumberToServer);
+
+                        ForwarderManager.mIncPacketQueue.put(new PacketDumpInfo(packetToClient,
+                                annot));
+                    }
+
+                    forwarder.mDecryptedAckNumberToServer += got;
                 }
 
                 out.write(buffer.array(), buffer.arrayOffset(), got);

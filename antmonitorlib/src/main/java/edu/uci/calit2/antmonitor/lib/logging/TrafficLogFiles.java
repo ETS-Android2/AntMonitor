@@ -58,6 +58,11 @@ public class TrafficLogFiles {
     public static final String COMPLETED_LOG_FILE_PREFIX = "COMPLETED";
 
     /**
+     * Prefix for files that come from decrypted SSL/TLS streams
+     */
+    public static final String DECRYPTED_LOG_FILE_PREFIX = "DECRYPTED";
+
+    /**
      * Tag used for Android debug/error log.
      */
     private static final String TAG = TrafficLogFiles.class.getSimpleName();
@@ -108,15 +113,19 @@ public class TrafficLogFiles {
      *      first file of the pair is for inbound traffic, and the second file of the pair is for
      *      outbound traffic.
      */
-    static Pair<PcapngFile, PcapngFile> createNewActiveFileSet(Context context) {
+    static Pair<PcapngFile, PcapngFile> createNewActiveFileSet(Context context,
+                                                               boolean isForDecrypted) {
         Calendar cal = Calendar.getInstance(Locale.getDefault());
         File folder = new File(LOG_DIR);
         folder.mkdirs();
 
+        String baseFilePathName = folder.getAbsolutePath() + "/" + ACTIVE_LOG_FILE_PREFIX + "_";
+
+        if (isForDecrypted)
+            baseFilePathName += DECRYPTED_LOG_FILE_PREFIX + "_";
+
         // Name file according to timestamp.
-        String baseFilePathName = folder.getAbsolutePath() + "/" +
-                ACTIVE_LOG_FILE_PREFIX + "_" +
-                cal.get(Calendar.DAY_OF_MONTH) + "-" +
+        baseFilePathName += cal.get(Calendar.DAY_OF_MONTH) + "-" +
                 // January has value = 0. Add 1 to enhance readability.
                 (cal.get(Calendar.MONTH) + 1) + "-" +
                 cal.get(Calendar.YEAR) + "_" +

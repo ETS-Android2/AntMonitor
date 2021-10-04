@@ -1,6 +1,6 @@
 /*
  *  This file is part of AntMonitor <https://athinagroup.eng.uci.edu/projects/antmonitor/>.
- *  Copyright (C) 2018 Anastasia Shuba and the UCI Networking Group
+ *  Copyright (C) 2021 Anastasia Shuba and the UCI Networking Group
  *  <https://athinagroup.eng.uci.edu>, University of California, Irvine.
  *
  *  AntMonitor is free software: you can redistribute it and/or modify
@@ -18,9 +18,16 @@
 package edu.uci.calit2.antmonitor.lib.logging;
 
 
+import android.annotation.TargetApi;
 import android.content.Context;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
+import android.net.ConnectivityManager;
+import android.os.Build;
 import android.util.Log;
 import android.util.Pair;
+
+import java.net.InetSocketAddress;
 
 import edu.uci.calit2.antmonitor.lib.logging.ConnectionValue.MappingErrors;
 import edu.uci.calit2.antmonitor.lib.util.IpDatagram;
@@ -28,6 +35,10 @@ import edu.uci.calit2.antmonitor.lib.util.PacketDumpInfo;
 import edu.uci.calit2.antmonitor.lib.util.PcapngFile;
 import edu.uci.calit2.antmonitor.lib.util.Protocol;
 import edu.uci.calit2.antmonitor.lib.util.TCPPacket;
+
+import static android.os.Process.INVALID_UID;
+import static android.system.OsConstants.IPPROTO_TCP;
+import static android.system.OsConstants.IPPROTO_UDP;
 
 /**
  * This class contains various methods for logging, mapping, and parsing packets.
@@ -54,11 +65,18 @@ public class PacketProcessor {
     /** Manager of pcapng files */
     private static DumperFileStateManager mStateManager;
 
+    /** Manager of pcapng files that host packets from decrypted SSL/TLS streams */
+    private static DumperFileStateManager mDecryptedStateManager;
+
     /** Reference to the singleton */
     private static PacketProcessor processor = null;
 
+    private static ConnectivityManager mConnectivityManager;
+
     private PacketProcessor(Context context) {
         mContext = context;
+        mConnectivityManager =
+                (ConnectivityManager) mContext.getSystemService(Context.CONNECTIVITY_SERVICE);
         prepareForMapping();
     }
 
@@ -81,12 +99,79 @@ public class PacketProcessor {
 
     private synchronized void prepareForLogging() {
         // Create the log files
-        mStateManager = new DumperFileStateManager(mContext);
-        Pair<PcapngFile, PcapngFile> files = TrafficLogFiles.createNewActiveFileSet(mContext);
+        mStateManager = new DumperFileStateManager(mContext, false);
+        Pair<PcapngFile, PcapngFile> files = TrafficLogFiles.createNewActiveFileSet(mContext, false);
         mStateManager.setFiles(files);
+
+        mDecryptedStateManager = new DumperFileStateManager(mContext, true);
+        Pair<PcapngFile, PcapngFile> decryptedFiles =
+                TrafficLogFiles.createNewActiveFileSet(mContext, true);
+        mDecryptedStateManager.setFiles(decryptedFiles);
     }
 
+    /**
+     * Retrieves the name of the app based on the given uid
+     *
+     * @param uid - of the app
+     * @return the name of the package of the app with the given uid, or "Unknown" if
+     * no name could be found for the uid.
+     */
+    static ConnectionValue getAppNameByUID (PackageManager pm, int uid) {
+        /* IMPORTANT NOTE:
+         * From https://source.android.com/devices/tech/security/ : "The Android
+         * system assigns a unique user ID (UID) to each Android application and
+         * runs it as that user in a separate process"
+         *
+         * However, there is an exception: "A closer relationship with a shared
+         * Application Sandbox is allowed via the shared UID feature where two
+         * or more applications signed with same developer key can declare a
+         * shared UID in their manifest."
+         */
 
+        // See if this is root
+        if (uid == 0)
+            return MappingErrors.CV_INVALID_UID;
+
+        // If we can't find a running app, just get a list of packages that map to the uid
+        String[] packages = pm.getPackagesForUid(uid);
+
+        // here we take the first one
+        if (packages != null && packages.length > 0) {
+            String packageName = packages[0];
+            String versionName = "";
+            try {
+                PackageInfo info = pm.getPackageInfo(packageName, 0);
+                versionName = info.versionName;
+            } catch (PackageManager.NameNotFoundException e) {
+                //Log.d("Could not find versionName for package");
+            }
+            return new ConnectionValue(packageName, versionName);
+        }
+
+        return MappingErrors.CV_NOT_FOUND;
+    }
+
+    @TargetApi(Build.VERSION_CODES.Q)
+    private static ConnectionValue getAppNameQ (short protocol, int srcPort, String srcIP, int dstPort,
+                                               String dstIP) {
+        // Only UDP and TCP are supported
+        int lookupProtocol = (protocol == IpDatagram.TCP) ? IPPROTO_TCP : IPPROTO_UDP;
+
+        InetSocketAddress local, remote;
+        try {
+            local = new InetSocketAddress(srcIP, srcPort);
+            remote = new InetSocketAddress(dstIP, dstPort);
+
+        } catch (IllegalArgumentException | SecurityException e) {
+            return MappingErrors.CV_INVALID_TUPLE;
+        }
+
+        int uid = mConnectivityManager.getConnectionOwnerUid(lookupProtocol, local, remote);
+        if (uid == INVALID_UID) {
+            return MappingErrors.CV_INVALID_UID;
+        }
+        return getAppNameByUID(mContext.getPackageManager(), uid);
+    }
 
     /**
      * Maps the given packet to an app
@@ -106,22 +191,36 @@ public class PacketProcessor {
                 protocolNumber ==  Protocol.TCP.getProtocolNumber()) {
 
             int srcPort = -1;
-
+            int dstPort = -1;
+            String srcAddr = "";
+            String dstAddr = "";
             try {
                 if (trafficDirection == TrafficType.OUTGOING_PACKETS)
+                {
                     srcPort = IpDatagram.readSourcePort(packetDumpInfo.getDump());
+                    srcAddr = IpDatagram.readSourceIP(packetDumpInfo.getDump());
+
+                    dstPort = IpDatagram.readDestinationPort(packetDumpInfo.getDump());
+                    dstAddr = IpDatagram.readDestinationIP(packetDumpInfo.getDump());
+                }
                 else
+                {
                     srcPort = IpDatagram.readDestinationPort(packetDumpInfo.getDump());
+                    srcAddr = IpDatagram.readDestinationIP(packetDumpInfo.getDump());
+
+                    dstPort = IpDatagram.readSourcePort(packetDumpInfo.getDump());
+                    dstAddr = IpDatagram.readSourceIP(packetDumpInfo.getDump());
+                }
 
                 // Proceed to mapping
-                cv = getConnValue(srcPort);
+                cv = getConnValue(protocolNumber, srcPort, srcAddr, dstPort, dstAddr);
 
                 if (cv == null)
                     cv = MappingErrors.CV_NOT_FOUND;
 
             } catch (IndexOutOfBoundsException e) {
                 // Write that we couldn't map packet due to malformed packet
-                cv = MappingErrors.CV_MALFORMED_PACKET;
+                return MappingErrors.CV_MALFORMED_PACKET;
             }
         } else {
             // Write that we couldn't map packet due to its use of a transport protocol other than tcp/udp.
@@ -132,13 +231,16 @@ public class PacketProcessor {
     }
 
     /**
-     * Retrieves {@link ConnectionValue} for the given source port
+     * Retrieves {@link ConnectionValue} for the given source and destination tuples
      * @param srcPort port number of the client app
+     * @param srcIP source IP of the client app
+     * @param dstPort destination port
+     * @param dstIP destination IP
      * @return {@link ConnectionValue} containing the app name and version number, if available.
      *          If packet could not be mapped, {@code null} is returned
      */
-    public ConnectionValue getConnValue(int srcPort) {
-
+    public ConnectionValue getConnValue(short protocol, int srcPort, String srcIP, int dstPort,
+                                        String dstIP) {
         synchronized (mConnFinder) {
             ConnectionValue connVal = mConnFinder.getConnection(srcPort);
 
@@ -148,24 +250,25 @@ public class PacketProcessor {
             } else {
                 // No match. Re-map and try again.
                 //Log.d(TAG, "No match for " + connKey
-                if (android.os.Build.VERSION.SDK_INT <= 28) {
-                  mConnFinder.findConnections();
-                } else {
-	                Log.e(TAG, "This method does not work on Android 10 and higher." +
-                            "Resolve connection with connectivityManager.getConnectionOwnerUid instead, see: https://github.com/OxfordHCC/tracker-control-android/blob/c1f3350412e81a518fe1c402cf052aa0b1b06c63/app/src/main/java/net/kollnig/missioncontrol/Common.java#L147.");
-                }
-                connVal = mConnFinder.getConnection(srcPort);
-                if (connVal != null) {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                    connVal = getAppNameQ(protocol, srcPort, srcIP, dstPort, dstIP);
+                    mConnFinder.putConnection(srcPort, connVal, true);
                     return connVal;
                 } else {
-                    // Does not make sense to re-try anymore
-                    //Log.d(TAG, "Giving up on " + connKey + " no match!");
-                    // Until we re-map due to another "cache miss", we
-                    // will not attempt to map this key anymore
-                    ConnectionValue cv = MappingErrors.CV_NOT_FOUND;
-                    mConnFinder.putConnection(srcPort, cv, false);
-                    //appName = "No mapping: after 2 attempts.";
-                    return null;
+                    mConnFinder.findConnections();
+                    connVal = mConnFinder.getConnection(srcPort);
+                    if (connVal != null) {
+                        return connVal;
+                    } else {
+                        // Does not make sense to re-try anymore
+                        //Log.d(TAG, "Giving up on " + connKey + " no match!");
+                        // Until we re-map due to another "cache miss", we
+                        // will not attempt to map this key anymore
+                        ConnectionValue cv = MappingErrors.CV_NOT_FOUND;
+                        mConnFinder.putConnection(srcPort, cv, false);
+                        //appName = "No mapping: after 2 attempts.";
+                        return null;
+                    }
                 }
             }
         }
@@ -187,9 +290,15 @@ public class PacketProcessor {
         if(comment == null)
             comment = "";
 
-        PcapngFile file = mStateManager.getExistingFile(trafficDirection);
-        file.appendEnhancedPacketBlock(packet.getTimestamp(), packet.getCaptureLength(),
-                packet.getOriginalLength(), packet.getDump(), comment);
+        if (packet.getPacketAnnotation().isDecryptedTLS()) {
+            PcapngFile file = mDecryptedStateManager.getExistingFile(trafficDirection);
+            file.appendEnhancedPacketBlock(packet.getTimestamp(), packet.getCaptureLength(),
+                    packet.getOriginalLength(), packet.getDump(), comment);
+        } else {
+            PcapngFile file = mStateManager.getExistingFile(trafficDirection);
+            file.appendEnhancedPacketBlock(packet.getTimestamp(), packet.getCaptureLength(),
+                    packet.getOriginalLength(), packet.getDump(), comment);
+        }
     }
 
     /**
@@ -293,6 +402,9 @@ public class PacketProcessor {
                 if (mStateManager != null) {
                     mStateManager.finishLogging();
                     mStateManager = null;
+
+                    mDecryptedStateManager.finishLogging();
+                    mDecryptedStateManager = null;
                 }
                 processor = null;
             }

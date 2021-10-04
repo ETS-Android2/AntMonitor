@@ -1,6 +1,6 @@
 /*
  *  This file is part of AntMonitor <https://athinagroup.eng.uci.edu/projects/antmonitor/>.
- *  Copyright (C) 2018 Anastasia Shuba and the UCI Networking Group
+ *  Copyright (C) 2021 Anastasia Shuba and the UCI Networking Group
  *  <https://athinagroup.eng.uci.edu>, University of California, Irvine.
  *  Copyright (C) 2014  Yihang Song
  *
@@ -29,8 +29,13 @@ import org.sandroproxy.utils.PreferenceUtils;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.channels.SocketChannel;
+import java.security.KeyStore;
+import java.security.KeyStoreException;
+import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
+import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -38,11 +43,15 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
+import javax.net.ssl.SNIHostName;
+import javax.net.ssl.SNIServerName;
 import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLParameters;
 import javax.net.ssl.SSLSession;
 import javax.net.ssl.SSLSocket;
 import javax.net.ssl.SSLSocketFactory;
 import javax.net.ssl.TrustManager;
+import javax.net.ssl.TrustManagerFactory;
 import javax.net.ssl.X509TrustManager;
 import javax.security.auth.x500.X500Principal;
 
@@ -89,7 +98,7 @@ class Resolver {
     }
 
     SiteData getSecureHost(final AntSSLSocketFactory sslFactory, SiteData secureHostInit,
-                                   final boolean save) {
+                           final boolean save) {
 
         final SiteData secureHost = secureHostInit;
 
@@ -103,13 +112,33 @@ class Resolver {
             return matchSecureHost;
         }
 
+        TrustManagerFactory tmf = null;
+        try {
+            tmf = TrustManagerFactory.getInstance(
+                    TrustManagerFactory.getDefaultAlgorithm());
+            // Initialise the TMF as you normally would, for example:
+            tmf.init((KeyStore)null);
+        } catch (NoSuchAlgorithmException | KeyStoreException e) {
+            e.printStackTrace();
+            return null;
+        }
+
+
+        TrustManager[] trustManagers = tmf.getTrustManagers();
+        final X509TrustManager origTrustmanager = (X509TrustManager)trustManagers[0];
+
         TrustManager[] trustAllCerts = new TrustManager[]{
             new X509TrustManager() {
                 public X509Certificate[] getAcceptedIssuers() {
-                    return null;
+                    return origTrustmanager.getAcceptedIssuers();
                 }
 
                 public void checkClientTrusted(X509Certificate[] certs, String authType) {
+                    try {
+                        origTrustmanager.checkClientTrusted(certs, authType);
+                    } catch (CertificateException e) {
+                        e.printStackTrace();
+                    }
                 }
 
                 public void checkServerTrusted(X509Certificate[] certs, String authType) {
@@ -179,24 +208,42 @@ class Resolver {
             Socket socket = socketChannel.socket();
             vpnService.protect(socket);
             socketChannel.connect(new InetSocketAddress(hostName, secureHost.destPort));
-            SSLContext sslContext = SSLContext.getInstance("TLS");
-            sslContext.init(null, trustAllCerts, new SecureRandom());
+            SSLContext sslContext = SSLContext.getInstance("TLSv1.2");
+
+
+
+            sslContext.init(null, trustAllCerts, null);
             SSLSocketFactory factory = sslContext.getSocketFactory();
             SSLSocket sslsocket = (SSLSocket) factory.createSocket(socket, socket.getInetAddress().getHostAddress(), socket.getPort(), true);
             sslsocket.setUseClientMode(true);
 
+
+
             if (ForwarderManager.SSL_SNI_ENABLED && secureHost.hostName != null) {
                 try {
-                        ForwarderManager.Logg.d(TAG, secureHost.sourcePort +
-                                " SSL_SNI_ENABLED: attempting to get certs: " + secureHost.hostName + ", ip dest: " + secureHost.tcpAddress);
-                        java.lang.reflect.Method setHostnameMethod = sslsocket.getClass().getMethod("setHostname", String.class);
-                        setHostnameMethod.invoke(sslsocket, secureHost.hostName);
+                        if (android.os.Build.VERSION.SDK_INT <= 28) {
+                            ForwarderManager.Logg.d(TAG, secureHost.sourcePort +
+                                    " SSL_SNI_ENABLED: attempting to get certs: " + secureHost.hostName + ", ip dest: " + secureHost.tcpAddress);
+                            java.lang.reflect.Method setHostnameMethod = sslsocket.getClass().getMethod("setHostname", String.class);
+                            setHostnameMethod.invoke(sslsocket, secureHost.hostName);
+                        } else {
+                            SSLParameters parameters = new SSLParameters();
+                            SNIServerName sniServerName = new SNIHostName(secureHost.hostName);
+                            List<SNIServerName> sniNames = new ArrayList<>();
+                            sniNames.add(sniServerName);
+                            parameters.setServerNames(sniNames);
+                            sslsocket.setSSLParameters(parameters);
+                        }
+
                     } catch (Exception e) {
                         ForwarderManager.Logg.e(TAG, "SNI not useable", e);
                     }
             }
 
-            sslsocket.getSession();
+            SSLSession session = sslsocket.getSession();
+            if (session == null || !session.isValid()) {
+                Log.e(TAG, "Got invalid session");
+            }
             sslsocket.close();
         } catch (Exception e) {
             Log.w(TAG, e.getMessage(), e);
@@ -224,7 +271,7 @@ class Resolver {
             Socket socket = socketChannel.socket();
             vpnService.protect(socket);
             socketChannel.connect(new InetSocketAddress(hostName, secureHost.destPort));
-            SSLContext sslContext = SSLContext.getInstance("TLS");
+            SSLContext sslContext = SSLContext.getInstance("TLSv1.2");
             sslContext.init(null, null, new SecureRandom());
             //sslContext.init(null, trustAllCerts, new SecureRandom());
             SSLSocketFactory factory = sslContext.getSocketFactory();

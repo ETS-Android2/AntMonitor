@@ -30,7 +30,9 @@ import java.util.LinkedList;
 import edu.uci.calit2.antmonitor.lib.logging.ConnectionValue;
 import edu.uci.calit2.antmonitor.lib.logging.PacketProcessor;
 import edu.uci.calit2.antmonitor.lib.util.IpDatagram;
+import edu.uci.calit2.antmonitor.lib.util.Protocol;
 import edu.uci.calit2.antmonitor.lib.util.TCPPacket;
+import edu.uci.calit2.antmonitor.lib.util.TCPReassemblyInfo;
 import edu.uci.calit2.antmonitor.lib.vpn.ForwarderManager.Logg;
 import edu.uci.calit2.antmonitor.lib.vpn.VPNUtils.ChangeRequest;
 
@@ -50,12 +52,17 @@ public class TCPForwarder {
     String mServerName = null;
     Thread TLSFwdThread;
     boolean isInHandshake = false;
+    boolean isTLSintercepted = false;
 
     InetAddress mServerIP;
     SocketChannel mSocketChannel;
     long mSequenceNumberToClient;
     long mAckNumberToClient;
     long mAckNumberToServer;
+
+    long mDecryptedSeqNumberToServer = 0;
+    long mDecryptedAckNumberToServer = 0;
+
     private long mFinSequenceNumberToClient = -1;
     private byte[] mFinToClient;
 
@@ -144,7 +151,11 @@ public class TCPForwarder {
                 if (TLSProxyServer.pinnedDomains.containsKey(certCN)) {
                     // Check if this domain is pinned for this particular app
                     ConnectionValue cv = PacketProcessor.getInstance(ForwarderManager.mService).
-                            getConnValue(mSrc.mPort);
+                            getConnValue(Protocol.TCP.getProtocolNumber(),
+                                    mSrc.mPort,
+                                    VpnClient.mTunInterfaceIP,
+                                    mDst.mPort,
+                                    serverIP);
 
                     if (cv == null) {
                         Logg.e(TAG, TCPForwarder.this + ": Skipping TLS: could not get app name.");
@@ -161,6 +172,7 @@ public class TCPForwarder {
                 }
 
                 // Proceed to SSL bumping
+                isTLSintercepted = true;
                 socket.setReuseAddress(true);
                 socket.bind(new InetSocketAddress(InetAddress.getLocalHost(), mSrc.mPort));
                 mSocketChannel.connect(new InetSocketAddress(TLSProxyServer.port));
@@ -667,6 +679,138 @@ public class TCPForwarder {
     /**
      * Construct an IP packet to send to the client. All packets have push flag.
      *
+     * @param data
+     * @param dataOffset
+     * @param dataLen
+     * @return
+     */
+    public synchronized byte[] constructTcpIpPacketToClient(byte[] data, int dataOffset,
+                                                            int dataLen, long seqNum, long ackNum) {
+        // Number of bytes for MSS TCP Option and End Option List
+        int tcpOptionLen = 0;
+//        if (isSyn) {
+//            tcpOptionLen = 8;
+//        }
+
+        byte[] packetToClient = new byte[IpDatagram.IP_HEADER_DEFAULT_LENGTH  + IpDatagram.TCP_HEADER_DEFAULT_LENGTH + tcpOptionLen + dataLen];
+
+        // First 20 bytes are IP header
+        // First byte: Version 4, IP Header Len = 5: 0b01000101
+        packetToClient[0] = 0b01000101;
+
+        // Second byte: Differentiated Services: not used
+
+        // 3rd and 4th Byte is total length
+        int totalLen = IpDatagram.IP_HEADER_DEFAULT_LENGTH  + IpDatagram.TCP_HEADER_DEFAULT_LENGTH + tcpOptionLen + dataLen;
+        packetToClient[2] = (byte) (totalLen >> 8);
+        packetToClient[3] = (byte) (totalLen);
+
+        // 5th and 6th Byte is Identification for fragmentation:
+        ForwarderManager.mIpIdentification++;
+        if (ForwarderManager.mIpIdentification == Short.MAX_VALUE) {
+            ForwarderManager.mIpIdentification = 0;
+        }
+        packetToClient[4] = (byte) (ForwarderManager.mIpIdentification >> 8);
+        packetToClient[5] = (byte) (ForwarderManager.mIpIdentification);
+
+        // 7th and 8th are Flags and Fragment offset: not used
+        // 9th is TTL. Set to 20
+        packetToClient[8] = (byte) 20;
+        // 10th is Protocol: TCP = 6
+        packetToClient[9] = IpDatagram.TCP;
+
+        // 13, 14, 15, 16 are Source IP
+        packetToClient[12] = mDst.mIpArray[0];
+        packetToClient[13] = mDst.mIpArray[1];
+        packetToClient[14] = mDst.mIpArray[2];
+        packetToClient[15] = mDst.mIpArray[3];
+
+        // 17, 18, 19, 20 are Dest IP
+        packetToClient[16] = mSrc.mIpArray[0];
+        packetToClient[17] = mSrc.mIpArray[1];
+        packetToClient[18] = mSrc.mIpArray[2];
+        packetToClient[19] = mSrc.mIpArray[3];
+
+        // 11th and 12th are header Check sum
+        long checkSum = IpDatagram.calculateIPv4Checksum(packetToClient, 0, IpDatagram.IP_HEADER_DEFAULT_LENGTH);
+        packetToClient[10] = (byte) (checkSum >> 8);
+        packetToClient[11] = (byte) (checkSum);
+
+        // Next 20 bytes are TCP header
+        // 1st and 2nd: Source port
+        packetToClient[IpDatagram.IP_HEADER_DEFAULT_LENGTH] = (byte) (mDst.mPort >> 8);
+        packetToClient[IpDatagram.IP_HEADER_DEFAULT_LENGTH+1] = (byte) (mDst.mPort);
+
+        // 3rd and 4th: Destination port
+        packetToClient[IpDatagram.IP_HEADER_DEFAULT_LENGTH+2] = (byte) (mSrc.mPort >> 8);
+        packetToClient[IpDatagram.IP_HEADER_DEFAULT_LENGTH+3] = (byte) (mSrc.mPort);
+
+        // 5-8: Sequence Number
+        packetToClient[IpDatagram.IP_HEADER_DEFAULT_LENGTH+4] = (byte) (seqNum >> 24);
+        packetToClient[IpDatagram.IP_HEADER_DEFAULT_LENGTH+5] = (byte) (seqNum >> 16);
+        packetToClient[IpDatagram.IP_HEADER_DEFAULT_LENGTH+6] = (byte) (seqNum >> 8);
+        packetToClient[IpDatagram.IP_HEADER_DEFAULT_LENGTH+7] = (byte) (seqNum);
+
+        // 9-12: ACK Number
+        packetToClient[IpDatagram.IP_HEADER_DEFAULT_LENGTH+8] = (byte) (ackNum >> 24);
+        packetToClient[IpDatagram.IP_HEADER_DEFAULT_LENGTH+9] = (byte) (ackNum >> 16);
+        packetToClient[IpDatagram.IP_HEADER_DEFAULT_LENGTH+10] = (byte) (ackNum >> 8);
+        packetToClient[IpDatagram.IP_HEADER_DEFAULT_LENGTH+11] = (byte) (ackNum);
+
+        // 13th and 14th: Data Offset, Reserved, ECN, Control Bits
+        byte offset = (byte) 0b01010000; // 5-words = 20 bytes = TCP header len = data offset
+//        if (isSyn) { // include option
+//            offset = (byte) 0b01110000; // 7 words TCP header
+//        }
+
+        // set syn and ack flag. Last 6 bits: Urg, Ack, Push, Reset, Syn, Fin
+
+        byte pusMask = (byte) 0b00001000;
+        byte synMask = (byte) 0b00000010;
+        byte ackMask = (byte) 0b00010000;
+        byte finMask = (byte) 0b00000001;
+        byte rstMask = (byte) 0b00000100;
+        byte controlBits = 0;
+
+        if (dataLen > 0) {
+            controlBits = (byte) (pusMask | controlBits);
+        }
+//        if (isSyn) {
+//            controlBits = (byte) (synMask | controlBits);
+//        }
+        //if (isAck) {
+        controlBits = (byte) (ackMask | controlBits);
+        //}
+//        if (isFin) {
+//            controlBits = (byte) (finMask | controlBits);
+//        }
+//        if (isReset) {
+//            controlBits = (byte) (rstMask | controlBits);
+//        }
+        packetToClient[IpDatagram.IP_HEADER_DEFAULT_LENGTH+12] = offset;
+        packetToClient[IpDatagram.IP_HEADER_DEFAULT_LENGTH+13] = controlBits;
+
+        // 15th and 16th: Window
+        int maxWindow = 65535;
+        packetToClient[IpDatagram.IP_HEADER_DEFAULT_LENGTH+14] = (byte) (maxWindow >> 8);
+        packetToClient[IpDatagram.IP_HEADER_DEFAULT_LENGTH+15] = (byte) (maxWindow);
+
+        // 19th and 20th: Urgent Pointer: Not used
+
+        // Fill in the data
+        if (data != null) {
+            System.arraycopy(data, dataOffset,
+                    packetToClient, IpDatagram.IP_HEADER_DEFAULT_LENGTH + IpDatagram.TCP_HEADER_DEFAULT_LENGTH,
+                    dataLen);
+        }
+
+        return packetToClient;
+    }
+
+
+    /**
+     * Construct an IP packet to send to the client. All packets have push flag.
+     *
      * @param isSyn
      * @param isAck
      * @param isFin
@@ -822,6 +966,146 @@ public class TCPForwarder {
         pseudoIpHeaderAndTcpHeader[5] = mSrc.mIpArray[1];
         pseudoIpHeaderAndTcpHeader[6] = mSrc.mIpArray[2];
         pseudoIpHeaderAndTcpHeader[7] = mSrc.mIpArray[3];
+        pseudoIpHeaderAndTcpHeader[9] = IpDatagram.TCP;
+        int totalTCPLen = IpDatagram.TCP_HEADER_DEFAULT_LENGTH + tcpOptionLen + dataLen;
+        pseudoIpHeaderAndTcpHeader[10] = (byte) (totalTCPLen >> 8);
+        pseudoIpHeaderAndTcpHeader[11] = (byte) totalTCPLen;
+        // Copy over TCP header-with-zero-checksum
+        System.arraycopy(packetToClient, IpDatagram.IP_HEADER_DEFAULT_LENGTH,
+                pseudoIpHeaderAndTcpHeader, IpDatagram.IP_HEADER_PSEUDO_LENGTH, IpDatagram.TCP_HEADER_DEFAULT_LENGTH + tcpOptionLen);
+
+        long tcpCheckSum = TCPPacket.calculateChecksum(pseudoIpHeaderAndTcpHeader, 0, pseudoIpHeaderAndTcpHeader.length, data, dataOffset, dataLen);
+        packetToClient[IpDatagram.IP_HEADER_DEFAULT_LENGTH+16] = (byte) (tcpCheckSum >> 8);
+        packetToClient[IpDatagram.IP_HEADER_DEFAULT_LENGTH+17] = (byte) (tcpCheckSum);
+
+        return packetToClient;
+    }
+
+    /**
+     * Construct an IP packet to send to the client. All packets have push flag.
+     *
+     * @param data
+     * @param dataOffset
+     * @param dataLen
+     * @return
+     */
+    public synchronized byte[] constructTcpIpPacketToServer(byte[] data, int dataOffset, int dataLen,
+                                                            long seqNum, long ackNum) {
+        // Number of bytes for MSS TCP Option and End Option List
+        int tcpOptionLen = 0;
+
+        byte[] packetToClient = new byte[IpDatagram.IP_HEADER_DEFAULT_LENGTH  + IpDatagram.TCP_HEADER_DEFAULT_LENGTH + tcpOptionLen + dataLen];
+
+        // First 20 bytes are IP header
+        // First byte: Version 4, IP Header Len = 5: 0b01000101
+        packetToClient[0] = 0b01000101;
+
+        // Second byte: Differentiated Services: not used
+
+        // 3rd and 4th Byte is total length
+        int totalLen = IpDatagram.IP_HEADER_DEFAULT_LENGTH  + IpDatagram.TCP_HEADER_DEFAULT_LENGTH + tcpOptionLen + dataLen;
+        packetToClient[2] = (byte) (totalLen >> 8);
+        packetToClient[3] = (byte) (totalLen);
+
+        // 5th and 6th Byte is Identification for fragmentation:
+        ForwarderManager.mIpIdentification++;
+        if (ForwarderManager.mIpIdentification == Short.MAX_VALUE) {
+            ForwarderManager.mIpIdentification = 0;
+        }
+        packetToClient[4] = (byte) (ForwarderManager.mIpIdentification >> 8);
+        packetToClient[5] = (byte) (ForwarderManager.mIpIdentification);
+
+        // 7th and 8th are Flags and Fragment offset: not used
+        // 9th is TTL. Set to 20
+        packetToClient[8] = (byte) 20;
+        // 10th is Protocol: TCP = 6
+        packetToClient[9] = IpDatagram.TCP;
+
+        // 13, 14, 15, 16 are Source IP (going to server, so use client src IP)
+        packetToClient[12] = mSrc.mIpArray[0];
+        packetToClient[13] = mSrc.mIpArray[1];
+        packetToClient[14] = mSrc.mIpArray[2];
+        packetToClient[15] = mSrc.mIpArray[3];
+
+        // 17, 18, 19, 20 are Dest IP (going to server, so use server IP)
+        packetToClient[16] = mDst.mIpArray[0];
+        packetToClient[17] = mDst.mIpArray[1];
+        packetToClient[18] = mDst.mIpArray[2];
+        packetToClient[19] = mDst.mIpArray[3];
+
+        // 11th and 12th are header Check sum
+        long checkSum = IpDatagram.calculateIPv4Checksum(packetToClient, 0, IpDatagram.IP_HEADER_DEFAULT_LENGTH);
+        packetToClient[10] = (byte) (checkSum >> 8);
+        packetToClient[11] = (byte) (checkSum);
+
+        // Next 20 bytes are TCP header
+        // 1st and 2nd: Source port
+        packetToClient[IpDatagram.IP_HEADER_DEFAULT_LENGTH] = (byte) (mSrc.mPort >> 8);
+        packetToClient[IpDatagram.IP_HEADER_DEFAULT_LENGTH+1] = (byte) (mSrc.mPort);
+
+        // 3rd and 4th: Destination port
+        packetToClient[IpDatagram.IP_HEADER_DEFAULT_LENGTH+2] = (byte) (mDst.mPort >> 8);
+        packetToClient[IpDatagram.IP_HEADER_DEFAULT_LENGTH+3] = (byte) (mDst.mPort);
+
+        // 5-8: Sequence Number
+        packetToClient[IpDatagram.IP_HEADER_DEFAULT_LENGTH+4] = (byte) (seqNum >> 24);
+        packetToClient[IpDatagram.IP_HEADER_DEFAULT_LENGTH+5] = (byte) (seqNum >> 16);
+        packetToClient[IpDatagram.IP_HEADER_DEFAULT_LENGTH+6] = (byte) (seqNum >> 8);
+        packetToClient[IpDatagram.IP_HEADER_DEFAULT_LENGTH+7] = (byte) (seqNum);
+
+        // 9-12: ACK Number
+        packetToClient[IpDatagram.IP_HEADER_DEFAULT_LENGTH+8] = (byte) (ackNum >> 24);
+        packetToClient[IpDatagram.IP_HEADER_DEFAULT_LENGTH+9] = (byte) (ackNum >> 16);
+        packetToClient[IpDatagram.IP_HEADER_DEFAULT_LENGTH+10] = (byte) (ackNum >> 8);
+        packetToClient[IpDatagram.IP_HEADER_DEFAULT_LENGTH+11] = (byte) (ackNum);
+
+        // 13th and 14th: Data Offset, Reserved, ECN, Control Bits
+        byte offset = (byte) 0b01010000; // 5-words = 20 bytes = TCP header len = data offset
+
+        // set syn and ack flag. Last 6 bits: Urg, Ack, Push, Reset, Syn, Fin
+
+        byte pusMask = (byte) 0b00001000;
+        byte ackMask = (byte) 0b00010000;
+        byte controlBits = 0;
+
+        if (dataLen > 0) {
+            controlBits = (byte) (pusMask | controlBits);
+        }
+
+        controlBits = (byte) (ackMask | controlBits);
+
+        packetToClient[IpDatagram.IP_HEADER_DEFAULT_LENGTH+12] = offset;
+        packetToClient[IpDatagram.IP_HEADER_DEFAULT_LENGTH+13] = controlBits;
+
+        // 15th and 16th: Window
+        int maxWindow = 65535;
+        packetToClient[IpDatagram.IP_HEADER_DEFAULT_LENGTH+14] = (byte) (maxWindow >> 8);
+        packetToClient[IpDatagram.IP_HEADER_DEFAULT_LENGTH+15] = (byte) (maxWindow);
+
+        // 19th and 20th: Urgent Pointer: Not used
+
+        // Fill in the data
+        if (data != null) {
+            System.arraycopy(data, dataOffset,
+                    packetToClient, IpDatagram.IP_HEADER_DEFAULT_LENGTH + IpDatagram.TCP_HEADER_DEFAULT_LENGTH,
+                    dataLen);
+        }
+
+        // 17th and 18th: Checksum
+        // Checksum here is computed with pseudo-ip-header, tcp-header-with-zero-checksum, option, and data
+        byte[] pseudoIpHeaderAndTcpHeader = new byte[IpDatagram.IP_HEADER_PSEUDO_LENGTH +
+                IpDatagram.TCP_HEADER_DEFAULT_LENGTH + tcpOptionLen];
+        // Fill in pseudo-header: srcIP, dstIp, reserved, protocol TCP, TCP segment length
+        pseudoIpHeaderAndTcpHeader[0] = mSrc.mIpArray[0];
+        pseudoIpHeaderAndTcpHeader[1] = mSrc.mIpArray[1];
+        pseudoIpHeaderAndTcpHeader[2] = mSrc.mIpArray[2];
+        pseudoIpHeaderAndTcpHeader[3] = mSrc.mIpArray[3];
+
+        pseudoIpHeaderAndTcpHeader[4] = mDst.mIpArray[0];
+        pseudoIpHeaderAndTcpHeader[5] = mDst.mIpArray[1];
+        pseudoIpHeaderAndTcpHeader[6] = mDst.mIpArray[2];
+        pseudoIpHeaderAndTcpHeader[7] = mDst.mIpArray[3];
+
         pseudoIpHeaderAndTcpHeader[9] = IpDatagram.TCP;
         int totalTCPLen = IpDatagram.TCP_HEADER_DEFAULT_LENGTH + tcpOptionLen + dataLen;
         pseudoIpHeaderAndTcpHeader[10] = (byte) (totalTCPLen >> 8);
