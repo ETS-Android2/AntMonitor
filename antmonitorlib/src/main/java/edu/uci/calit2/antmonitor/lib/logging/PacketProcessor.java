@@ -1,6 +1,6 @@
 /*
  *  This file is part of AntMonitor <https://athinagroup.eng.uci.edu/projects/antmonitor/>.
- *  Copyright (C) 2018 Anastasia Shuba and the UCI Networking Group
+ *  Copyright (C) 2021 Anastasia Shuba and the UCI Networking Group
  *  <https://athinagroup.eng.uci.edu>, University of California, Irvine.
  *
  *  AntMonitor is free software: you can redistribute it and/or modify

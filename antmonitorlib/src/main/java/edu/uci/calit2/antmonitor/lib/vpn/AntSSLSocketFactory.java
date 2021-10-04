@@ -324,7 +324,7 @@ class AntSSLSocketFactory {
                             }
                         }
                 };
-                sslContext = SSLContext.getInstance("TLS");
+                sslContext = SSLContext.getInstance("TLSv1.2");
                 sslContext.init(new KeyManager[]{km}, trustManagers, null);
                 contextCache.put(certEntry, sslContext);
                 domainToContextKey.put(hostData.name, certEntry);
