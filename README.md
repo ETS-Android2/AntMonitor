@@ -82,4 +82,9 @@ If you find a bug, please open a GitHub issue. Please provide the following info
 * Stack trace, if applicable (for any crashes encountered)
 
 ### Known Issues
-There are several bugs in the TLS interception capability, and as of Android 7.0, it is no longer possible to intercept TLS connections.
+There are several bugs in the TLS interception capability, and as of Android 7.0, it is no longer possible to intercept TLS connections
+with AntMonitor alone. However, you can use it in conjunction with
+any of the tricks discussed [here](https://www.netspi.com/blog/technical/mobile-application-penetration-testing/four-ways-bypass-android-ssl-verification-certificate-pinning/).
+
+Further, there have been additional changes to TLS in Android 11+ and
+we will push a fix for them soon.
