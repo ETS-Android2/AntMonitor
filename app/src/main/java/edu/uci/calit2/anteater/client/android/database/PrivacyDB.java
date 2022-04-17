@@ -19,6 +19,7 @@ package edu.uci.calit2.anteater.client.android.database;
 
 import android.accounts.Account;
 import android.accounts.AccountManager;
+import android.app.Activity;
 import android.app.Notification;
 import android.content.ContentValues;
 import android.content.Context;
@@ -50,6 +51,7 @@ import java.util.regex.Pattern;
 import edu.uci.calit2.anteater.client.android.activity.uielements.PrivacyLeaksReportCursorLoader;
 import edu.uci.calit2.anteater.client.android.analysis.ActionReceiver;
 import edu.uci.calit2.anteater.client.android.device.DeviceUtils;
+import edu.uci.calit2.anteater.client.android.util.PermissionHelper;
 
 /**
  * @author Anastasia Shuba
@@ -218,6 +220,14 @@ public class PrivacyDB {
      * @param context context used to open the database
      **/
     public synchronized void setDefaultValues(Context context) {
+
+        if (context instanceof Activity) {
+            boolean hasRequiredPermissions = PermissionHelper.requestPermissions((Activity)context);
+            if (!hasRequiredPermissions) {
+                return;
+            }
+        }
+
 
         final boolean isCustom = false;
         final boolean isSearchable = true;
